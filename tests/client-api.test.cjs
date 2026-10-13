@@ -1,21 +1,23 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-test('client authenticates protected dashboard requests in memory', async () => {
-  const { createApiClient } = await import('../src/apiClient.mjs');
-  const api = createApiClient(async (_url, options) => {
-    if (!options.headers.authorization) {
-      return new Response(JSON.stringify({ error: 'Sign in required' }), { status: 401 });
-    }
-    assert.equal(options.headers.authorization, 'Basic ' + Buffer.from('student:password').toString('base64'));
-    return new Response(JSON.stringify({ totalWords: 0, totalDurationSeconds: 0, sessionCount: 0, successRate: 0 }), { status: 200 });
+test('client sends same-origin cookies and CSRF and clears state after unauthorized responses', async () => {
+  const {createApiClient}=await import('../src/apiClient.mjs');
+  const calls=[];let unauthorized=false,failures=0;
+  const api=createApiClient(async(url,options)=>{
+    calls.push({url,options});
+    if(unauthorized)return new Response(JSON.stringify({error:'Sign in required'}),{status:401});
+    return new Response(JSON.stringify(url==='/api/auth/me'?{user:{id:'user'},csrfToken:'server-csrf'}:{totalWords:0}),{status:200});
   });
-
-  await assert.rejects(api.getStats(), /Sign in required/);
-  api.setCredentials('student', 'password');
-  await api.getStats();
-  api.clearCredentials();
-  await assert.rejects(api.getStats(), /Sign in required/);
+  api.onAuthFailure(()=>failures++);
+  await api.getCurrentUser();
+  await api.saveDictation({text:'private',mode:'exact',duration:1});
+  assert.equal(calls[1].options.credentials,'same-origin');
+  assert.equal(calls[1].options.headers['x-csrf-token'],'server-csrf');
+  assert.equal(calls[1].options.headers.authorization,undefined);
+  unauthorized=true;
+  await assert.rejects(api.getStats(),error=>error.status===401);
+  assert.equal(failures,1);
 });
 
 test('client maps dashboard request payloads and treats a missing transcript as empty', async () => {
@@ -30,7 +32,6 @@ test('client maps dashboard request payloads and treats a missing transcript as 
     if (url === '/api/sessions') return new Response(JSON.stringify({ status: 'error' }), { status: 201 });
     throw new Error(`unexpected request ${url}`);
   });
-  api.setCredentials('student', 'password');
 
   assert.equal(await api.getTranscript(), null);
   assert.deepEqual(await api.updateTranscript(1, 'changed'), { id: 1, text: 'changed' });

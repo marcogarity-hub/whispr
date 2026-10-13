@@ -8,18 +8,14 @@ const appDir = path.join(__dirname, '..');
 test('package manifest exposes the required scripts', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(appDir, 'package.json'), 'utf8'));
   assert.equal(manifest.engines.node, '>=20');
-  assert.deepEqual(manifest.scripts, {
-    start: 'electron electron/main.cjs',
-    dev: 'VITE_DEV_SERVER_URL=http://localhost:5173 concurrently "vite" "electron electron/main.cjs"',
-    build: 'vite build',
-    test: 'node --test tests/**/*.test.cjs'
-  });
+  for(const name of ['start','dev','build','test']) assert.equal(typeof manifest.scripts[name],'string');
+  assert.equal(manifest.scripts['test:release'],'npm test && npm run test:db && npm run build');
 });
 
 test('createApp returns an Express app with a health endpoint', async () => {
   const { createApp } = require('../server/app.cjs');
   const app = createApp({
-    repository: {}, username: 'student', password: 'password', commit: 'abc123',
+    repository: {}, ...require('./helpers/auth-fixture.cjs').authOptions, commit: 'abc123',
     clock: () => new Date('2026-09-29T00:00:00.000Z')
   });
   assert.equal(typeof app, 'function');

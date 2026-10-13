@@ -1,15 +1,15 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, systemPreferences } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, clipboard, Notification, Tray, Menu, nativeImage, systemPreferences, shell } = require('electron');
 const { execFile } = require('node:child_process');
 const path = require('node:path');
 const { createMacOSController } = require('./macos.cjs');
 const { createLocalTranscriptionProvider } = require('../server/provider.cjs');
 const { processTranscript } = require('../server/processing.cjs');
+const {createDesktopAuth}=require('./auth.cjs');
 const { createSync } = require('./sync.cjs');
 
 let dashboardWindow;
 let captureWindow;
 let appTray;
-let authorization = '';
 
 const TRAY_ICON_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18"><rect x="6.5" y="2" width="5" height="9" rx="2.5" fill="#000"/><path d="M4.5 8.5v1a4.5 4.5 0 0 0 9 0v-1M9 14v2m-2 0h4" fill="none" stroke="#000" stroke-linecap="round" stroke-width="1.5"/></svg>';
 
@@ -109,8 +109,11 @@ function createRecordingRuntime({
   apiUrl = (() => {
     try { return new URL(getDashboardUrl()).origin; } catch { return process.env.WHISPR_API_URL || 'http://127.0.0.1:3000'; }
   })(),
-  getAuthorization = () => authorization
+  getAuthorization = null,
+  desktopAuth: desktopAuthImplementation = null
 } = {}) {
+  const desktopAuth=desktopAuthImplementation || createDesktopAuth({apiUrl,openExternal:url=>shell.openExternal(url),fetchImpl:(...args)=>fetchImpl(...args)});
+  const authorizationForSync=getAuthorization || desktopAuth.getAuthorization;
   let capture;
   let captureReady = false;
   const pendingCommands = [];
@@ -122,7 +125,7 @@ function createRecordingRuntime({
   let sync = syncImplementation || createSync({
     fetchImpl: (...args) => fetchImpl(...args),
     apiUrl,
-    getAuthorization
+    getAuthorization: authorizationForSync
   });
 
   function setTrayRecording(recordingState) {
@@ -286,17 +289,15 @@ function createRecordingRuntime({
     sendDashboardStatus({ type: 'transcription-complete', transcript });
   }
 
-  function setCredentials(event, { username = '', password = '' } = {}) {
-    const dashboard = getDashboardWindow();
-    if (!dashboard?.webContents || event?.sender !== dashboard.webContents) throw new Error('Untrusted window');
-    authorization = username && password
-      ? `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
-      : '';
-    return { ok: true };
+  function trusted(event) {
+    const contents=getDashboardWindow()?.webContents;
+    if(!contents || event?.sender!==contents || (event.senderFrame && event.senderFrame!==contents.mainFrame))throw new Error('Untrusted window');
   }
-
   function registerIpc() {
-    ipc.handle('auth:set-credentials', setCredentials);
+    ipc.handle('auth:sign-in',async event=>{trusted(event);return desktopAuth.signIn();});
+    ipc.handle('auth:get-status',async event=>{trusted(event);return desktopAuth.getStatus();});
+    ipc.handle('auth:logout',async event=>{trusted(event);return desktopAuth.logout();});
+    ipc.handle('api:request',async(event,request)=>{trusted(event);return desktopAuth.requestApi(request);});
     ipc.handle('recording:get-shortcut-state', () => shortcutStatus);
     ipc.handle('recording:start', (_event, { mode = 'exact' } = {}) => start(mode));
     ipc.handle('recording:stop', () => stop());

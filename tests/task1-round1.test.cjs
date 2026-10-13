@@ -16,5 +16,5 @@ test('Task 1 dev script passes Vite URL to Electron', () => {
   const electronSource = fs.readFileSync(path.join(appDir, 'electron/main.cjs'), 'utf8');
   assert.match(manifest.scripts.dev, /VITE_DEV_SERVER_URL=http:\/\/localhost:5173/);
   assert.match(electronSource, /VITE_DEV_SERVER_URL/);
-  assert.match(electronSource, /https:\/\/whispr\.vercel\.app/);
+  assert.match(electronSource, /https:\/\/whispr-flow-clone\.vercel\.app/);
 });

@@ -1,35 +1,31 @@
 const jsonHeaders = { 'content-type': 'application/json' };
 
-function encodeCredentials(username, password) {
-  const value = `${username}:${password}`;
-  if (typeof globalThis.btoa === 'function') return globalThis.btoa(value);
-  if (globalThis.Buffer) return globalThis.Buffer.from(value).toString('base64');
-  throw new Error('Basic authentication is not available in this browser');
-}
-
 function countWords(text) {
   return text.trim() ? text.trim().split(/\s+/).length : 0;
 }
 
-export function createApiClient(fetchImpl = globalThis.fetch) {
-  let authorization = null;
-
-  function setCredentials(username, password) {
-    authorization = `Basic ${encodeCredentials(username, password)}`;
-  }
-
-  function clearCredentials() {
-    authorization = null;
-  }
+export function createApiClient(fetchImpl = globalThis.fetch, desktopBridge = typeof window !== 'undefined' ? window.voiceTyping : null) {
+  let csrfToken = '';
+  let authFailure = () => {};
+  function clearSession() { csrfToken = ''; }
+  function onAuthFailure(callback) { authFailure=callback; return () => { if(authFailure===callback) authFailure=()=>{}; }; }
+  async function getCurrentUser() {const current=await request('/auth/me');csrfToken=current.csrfToken;return current;}
+  async function logout() {await request('/auth/logout',{method:'POST'});clearSession();}
 
   async function request(path, options = {}) {
     if (typeof fetchImpl !== 'function') throw new Error('Fetch is unavailable');
     const headers = { ...(options.body ? jsonHeaders : {}), ...(options.headers || {}) };
-    if (authorization) headers.authorization = authorization;
-    const response = await fetchImpl(`/api${path}`, { ...options, headers });
+    if (!['GET','HEAD'].includes(options.method || 'GET') && csrfToken) headers['x-csrf-token']=csrfToken;
+    const response = desktopBridge?.requestApi
+      ? await desktopBridge.requestApi({path,method:options.method || 'GET',body:options.body ? JSON.parse(options.body) : undefined}).then(result=>({status:result.status,ok:result.ok,json:async()=>result.payload}))
+      : await fetchImpl(`/api${path}`, { ...options, headers, credentials:'same-origin' });
     if (response.status === 204) return undefined;
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error || 'Request failed');
+    if (!response.ok) {
+      const error=Object.assign(new Error(payload.error || 'Request failed'),{status:response.status});
+      if(response.status===401){clearSession();authFailure();}
+      throw error;
+    }
     return payload;
   }
 
@@ -77,6 +73,6 @@ export function createApiClient(fetchImpl = globalThis.fetch) {
     });
   }
 
-  return { setCredentials, clearCredentials, getStats, getTranscript, updateTranscript, deleteTranscript, saveDictation, saveFailedSession };
+  return { getPairing:id=>request(`/auth/pairing/approve?id=${encodeURIComponent(id)}`), approvePairing:id=>request('/auth/pairing/approve',{method:'POST',body:JSON.stringify({pairingId:id})}), getCurrentUser, logout, clearSession, onAuthFailure, listUsers:()=>request('/users'), disableUser:id=>request(`/users/${encodeURIComponent(id)}/disable`,{method:'POST'}), restoreUser:id=>request(`/users/${encodeURIComponent(id)}/restore`,{method:'POST'}), getStats, getTranscript, updateTranscript, deleteTranscript, saveDictation, saveFailedSession };
 }
 

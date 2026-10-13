@@ -22,8 +22,8 @@ a local Vite server during development:
 VITE_DEV_SERVER_URL=http://localhost:5173 npm run dev
 ```
 
-Sign in with the shared Whispr account. Credentials stay in memory in the dashboard and Electron
-main process. macOS may ask for Microphone and Accessibility permissions so recording and paste
+Sign in with Google through the system browser and explicitly approve Whispr desktop.
+The desktop session stays in main-process memory; restarting requires sign-in again. macOS may ask for Microphone and Accessibility permissions so recording and paste
 can work. The global shortcut is Command+Shift+Space.
 
 ## Local Whisper setup
@@ -44,7 +44,7 @@ variable overrides.
 
 ## Browser development
 
-Run `npm run dev` and open the Vite URL. Allow microphone access, choose Exact or Polished mode,
+Run `npm run dev:web` with a configured `.env.local` and open http://localhost:5173. Allow microphone access, choose Exact or Polished mode,
 and start and stop the browser recorder. On first use, the browser downloads the English Whisper
 tiny model from its public model host, caches it when possible, and performs inference locally.
 Only finished text and session metadata are sent to the API; use Copy if a save is unavailable.
@@ -58,11 +58,12 @@ The Vercel project uses the private assignments repository, `ps3/` as its Root D
 and Root Directory match those values after importing the repository.
 
 Create separate Supabase development and production projects and apply
-`supabase/migrations/20261008000000_init.sql` to each one before sending traffic to its API.
+the versioned migrations to development first. For existing production data, follow the staged
+backup, ownership migration and write-freeze procedure in `docs/GOOGLE-AUTH-RELEASE.md`.
 Configure these names in Vercel Project Settings → Environment Variables; enter their values
 directly in the host dashboards:
 
-- Production: `BASIC_AUTH_USERNAME`, `BASIC_AUTH_PASSWORD`, `SUPABASE_URL`, and
+- Production: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_ORIGIN`, `OWNER_EMAIL`, `SUPABASE_URL`, and
   `SUPABASE_SERVICE_ROLE_KEY` for the production Supabase project.
 - Development: the same four names for the development Supabase project, with a separate shared
   password.
@@ -92,3 +93,13 @@ deployment.
 npm test
 npm run build
 ```
+
+## Part B development and tests
+
+Google sign-in replaces the shared password in the Part B source. Copy `.env.example` to ignored `.env.local` and enter Google credentials and a separate development Supabase project's server credentials privately. Apply the versioned migrations to that development database with the configured owner email before starting the API. Run `npm run dev:web` for Vite on localhost:5173 and the API on port 3000. For Electron development, run the API and the existing `npm run dev` command; do not run a second Vite server at the same time.
+
+Run `npm run test:release` before release. The `test:db` command provisions disposable local PostgreSQL clusters through the development-only embedded-postgres dependency, performs migration and authentication tests, and shuts them down. It requires permission to run local database processes; it does not need production secrets or TEST_DATABASE_URL. Linux CI uses the package's native platform binary and must run as a non-root user.
+
+The release procedure, backup/restore gate, migration order, old-deployment protection, and live acceptance checks are in [GOOGLE-AUTH-RELEASE.md](docs/GOOGLE-AUTH-RELEASE.md). Part B source is not proof that production has been migrated or verified.
+
+For real Google login acceptance with a disposable local database, enter only GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and OWNER_EMAIL in ignored `.env.local`, then run `npm run dev:oauth-check`. That harness runs the actual authentication/routes/repositories against local PostgreSQL, never reads Supabase/production database settings, and discards its data when stopped. Stop it before running test:db, which uses the same local port.

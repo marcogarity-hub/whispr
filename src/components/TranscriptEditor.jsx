@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api.js';
 
-export default function TranscriptEditor({ refreshKey = 0, onChanged, onError }) {
+export default function TranscriptEditor({ client = api, refreshKey = 0, onChanged, onError }) {
   const [transcript, setTranscript] = useState(null);
   const [text, setText] = useState('');
   const [state, setState] = useState('loading');
@@ -13,7 +13,7 @@ export default function TranscriptEditor({ refreshKey = 0, onChanged, onError })
     setState('loading');
     setError('');
     setPending(false);
-    api.getTranscript().then((result) => {
+    client.getTranscript().then((result) => {
       if (!active) return;
       setTranscript(result);
       setText(result?.text || '');
@@ -26,13 +26,13 @@ export default function TranscriptEditor({ refreshKey = 0, onChanged, onError })
       onError?.(message);
     });
     return () => { active = false; };
-  }, [refreshKey]);
+  }, [refreshKey, client]);
 
   async function save() {
     if (!transcript || pending) return;
     setPending(true);
     try {
-      const updated = await api.updateTranscript(transcript.id, text);
+      const updated = await client.updateTranscript(transcript.id, text);
       setTranscript(updated);
       setText(updated.text);
       setError('');
@@ -50,7 +50,7 @@ export default function TranscriptEditor({ refreshKey = 0, onChanged, onError })
     if (pending) return;
     setPending(true);
     try {
-      await api.deleteTranscript();
+      await client.deleteTranscript();
       setTranscript(null);
       setText('');
       setError('');

@@ -21,6 +21,7 @@ function createRoutes({ repository, clock = () => new Date() }) {
       return response.status(400).json({ error: 'Valid text, mode, and duration are required' });
     }
     const result = await repository.saveDictation({
+      userId: request.user.id,
       text: text.trim(),
       mode,
       duration,
@@ -29,8 +30,8 @@ function createRoutes({ repository, clock = () => new Date() }) {
     return response.status(201).json(result);
   }));
 
-  router.get('/api/transcript', wrap(async (_request, response) => {
-    const transcript = await repository.getLatestTranscript();
+  router.get('/api/transcript', wrap(async (request, response) => {
+    const transcript = await repository.getLatestTranscript(request.user.id);
     return transcript
       ? response.json(transcript)
       : response.status(404).json({ error: 'No latest transcript exists' });
@@ -41,25 +42,25 @@ function createRoutes({ repository, clock = () => new Date() }) {
     if (id !== 1 || !validText(text)) {
       return response.status(400).json({ error: 'id 1 and nonempty text are required' });
     }
-    const transcript = await repository.updateTranscript(1, text.trim(), timestamp());
+    const transcript = await repository.updateTranscript(request.user.id, 1, text.trim(), timestamp());
     return transcript
       ? response.json(transcript)
       : response.status(404).json({ error: 'No latest transcript exists' });
   }));
 
-  router.delete('/api/transcript', wrap(async (_request, response) => {
-    const deleted = await repository.deleteTranscript();
+  router.delete('/api/transcript', wrap(async (request, response) => {
+    const deleted = await repository.deleteTranscript(request.user.id);
     return deleted ? response.status(204).end() : response.status(404).json({ error: 'No latest transcript exists' });
   }));
 
-  router.get('/api/stats', wrap(async (_request, response) => response.json(await repository.getStats())));
+  router.get('/api/stats', wrap(async (request, response) => response.json(await repository.getStats(request.user.id))));
 
   router.post('/api/sessions', wrap(async (request, response) => {
     const { status, duration, errorMessage } = request.body || {};
     if (status !== 'error' || !validDuration(duration) || typeof errorMessage !== 'string') {
       return response.status(400).json({ error: 'An error status, duration, and error message are required' });
     }
-    const session = await repository.saveFailedSession({ duration, errorMessage, timestamp: timestamp() });
+    const session = await repository.saveFailedSession({ userId: request.user.id, duration, errorMessage, timestamp: timestamp() });
     return response.status(201).json(session);
   }));
 

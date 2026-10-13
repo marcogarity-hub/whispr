@@ -1,0 +1,3 @@
+export default function SignIn({isElectron,onSignIn,busy,errorMessage}) {
+ return <main className="shell auth-shell"><header><p className="eyebrow">WHISPR</p><h1>Voice typing, made simple.</h1><p className="intro">Sign in to use your private transcript and usage dashboard.</p></header><section className="card auth-card"><h2>Sign in</h2>{errorMessage && <p role="alert" className="error-message">{errorMessage}</p>}{isElectron?<button onClick={onSignIn} disabled={busy}>{busy?'Waiting for browser approval…':'Sign in with Google'}</button>:<a className="button" href="/api/auth/google/start">Sign in with Google</a>}<p className="muted">We use Google only to identify your account.</p></section></main>;
+}

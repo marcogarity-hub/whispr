@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const { createRepository } = require('../server/repository.cjs');
 
+const userId = '11111111-1111-4111-8111-111111111111';
 const timestamp = '2026-10-08T00:00:00Z';
 
 function createFakeClient() {
@@ -32,7 +33,7 @@ function createFakeClient() {
     update: { data: { ...transcript, text: 'three four', word_count: 2, updated_at: timestamp }, error: null },
     delete: { data: [{ id: 1 }], error: null },
     failedSession: {
-      data: { id: 8, duration: 2, word_count: 0, status: 'error', error_message: 'No microphone', created_at: timestamp },
+      data: { id: 8, user_id: userId, duration: 2, word_count: 0, status: 'error', error_message: 'No microphone', created_at: timestamp },
       error: null
     },
     stats: { data: { totalWords: 2, totalDurationSeconds: 3, sessionCount: 1, successRate: 100 }, error: null }
@@ -94,10 +95,10 @@ function createFakeClient() {
 
 test('saveDictation maps Supabase rows and computes no client-supplied word count', async () => {
   const client = createFakeClient();
-  const result = await createRepository(client).saveDictation({ text: 'one two', mode: 'exact', duration: 3, timestamp });
+  const result = await createRepository(client).saveDictation({ userId, text: 'one two', mode: 'exact', duration: 3, timestamp });
 
   assert.equal(client.calls[0].name, 'save_dictation');
-  assert.deepEqual(client.calls[0].args, { p_text: 'one two', p_mode: 'exact', p_duration: 3, p_timestamp: timestamp });
+  assert.deepEqual(client.calls[0].args, { p_user_id: userId, p_text: 'one two', p_mode: 'exact', p_duration: 3, p_timestamp: timestamp });
   assert.equal(result.transcript.wordCount, 2);
   assert.equal(result.session.status, 'success');
   assert.deepEqual(result.transcript, {
@@ -109,24 +110,40 @@ test('repository maps query results and propagates Supabase errors', async () =>
   const client = createFakeClient();
   const repository = createRepository(client);
 
-  assert.equal(await repository.getLatestTranscript(), null);
-  const updated = await repository.updateTranscript(1, 'three four', timestamp);
+  assert.equal(await repository.getLatestTranscript(userId), null);
+  const updated = await repository.updateTranscript(userId, 1, 'three four', timestamp);
   assert.equal(updated.wordCount, 2);
   assert.equal(updated.text, 'three four');
+  assert.deepEqual(client.calls[0].operation.filters, [{column:'user_id',value:userId},{column:'id',value:1}]);
   const updateQuery = client.calls.find(call => call.operation?.action === 'update');
+  assert.deepEqual(updateQuery.operation.filters, [{column:'user_id',value:userId},{column:'id',value:1}]);
   assert.deepEqual(updateQuery.operation.values, { text: 'three four', word_count: 2, updated_at: timestamp });
 
-  assert.equal(await repository.deleteTranscript(), true);
+  assert.equal(await repository.deleteTranscript(userId), true);
   const deleteQuery = client.calls.find(call => call.operation?.action === 'delete');
-  assert.deepEqual(deleteQuery.operation.filters, [{ column: 'id', value: 1 }]);
+  assert.deepEqual(deleteQuery.operation.filters, [{ column: 'user_id', value: userId }, { column: 'id', value: 1 }]);
 
-  const failed = await repository.saveFailedSession({ duration: 2, errorMessage: 'No microphone', timestamp });
+  const failed = await repository.saveFailedSession({ userId, duration: 2, errorMessage: 'No microphone', timestamp });
   assert.equal(failed.status, 'error');
   const insertQuery = client.calls.find(call => call.operation?.action === 'insert');
   assert.deepEqual(insertQuery.operation.values, {
-    duration: 2, word_count: 0, status: 'error', error_message: 'No microphone', created_at: timestamp
+    user_id: userId, duration: 2, word_count: 0, status: 'error', error_message: 'No microphone', created_at: timestamp
   });
 
-  assert.equal((await repository.getStats()).sessionCount, 1);
-  await assert.rejects(repository.getLatestTranscript(), /database unavailable/);
+  assert.equal((await repository.getStats(userId)).sessionCount, 1);
+  assert.deepEqual(client.calls.find(call => call.name === 'get_stats').args, {p_user_id:userId});
+  await assert.rejects(repository.getLatestTranscript(userId), /database unavailable/);
+});
+
+// Missing identity must never issue an unscoped database operation.
+test('repository rejects missing user identity before database access', async () => {
+  const client = createFakeClient();
+  const repository = createRepository(client);
+  await assert.rejects(repository.getLatestTranscript(), /user ID/i);
+  await assert.rejects(repository.deleteTranscript(), /user ID/i);
+  await assert.rejects(repository.updateTranscript(undefined, 1, 'text', timestamp), /user ID/i);
+  await assert.rejects(repository.getStats(), /user ID/i);
+  await assert.rejects(repository.saveDictation({text:'text',mode:'exact',duration:1,timestamp}), /user ID/i);
+  await assert.rejects(repository.saveFailedSession({duration:1,errorMessage:'failed',timestamp}), /user ID/i);
+  assert.equal(client.calls.length, 0);
 });

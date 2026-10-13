@@ -8,7 +8,7 @@ const { createApp } = require('../server/app.cjs');
 const { getDashboardUrl } = require('../electron/main.cjs');
 
 test('production API code uses the Supabase repository entry point and no SQLite server', () => {
-  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'api/index.js'), 'utf8');
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'api/index.js'), 'utf8') + fs.readFileSync(path.join(__dirname, '..', 'server/bootstrap.cjs'), 'utf8');
   assert.match(apiSource, /@supabase\/supabase-js/);
   assert.match(apiSource, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(apiSource, /createDatabase|db\.cjs/);
@@ -20,7 +20,7 @@ test('dashboard loads built assets and keeps its URL selection contract', async 
   const staticDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'whispr-dist-'));
   fs.writeFileSync(path.join(staticDirectory, 'index.html'), '<main>Whispr dashboard</main>');
   const app = createApp({
-    repository: {}, username: 'student', password: 'password', commit: 'abc123', staticDirectory
+    repository: {}, ...require('./helpers/auth-fixture.cjs').authOptions, commit: 'abc123', staticDirectory
   });
   const server = app.listen(0);
   await new Promise(resolve => server.once('listening', resolve));

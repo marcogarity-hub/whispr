@@ -4,6 +4,9 @@ import StatusCard from './components/StatusCard.jsx';
 import BrowserRecorder from './components/BrowserRecorder.jsx';
 import TranscriptEditor from './components/TranscriptEditor.jsx';
 import StatsPanel from './components/StatsPanel.jsx';
+import SignIn from './components/SignIn.jsx';
+import UserManagement from './components/UserManagement.jsx';
+import PairingApproval, {rememberPairing} from './components/PairingApproval.jsx';
 
 const statusForEvent = {
   'recording-started': 'recording',
@@ -19,43 +22,23 @@ function messageForError(error, fallback) {
   return error?.message || fallback;
 }
 
-function SignIn({ username, password, onUsernameChange, onPasswordChange, onSubmit, busy, errorMessage }) {
-  return (
-    <main className="shell auth-shell">
-      <header>
-        <p className="eyebrow">WHISPR</p>
-        <h1>Voice typing, made simple.</h1>
-        <p className="intro">Sign in to use your private transcript and usage dashboard.</p>
-      </header>
-      <section className="card auth-card" aria-labelledby="sign-in-title">
-        <h2 id="sign-in-title">Sign in</h2>
-        <form onSubmit={onSubmit}>
-          <label>Username<input name="username" value={username} onChange={(event) => onUsernameChange(event.target.value)} autoComplete="username" required /></label>
-          <label>Password<input name="password" type="password" value={password} onChange={(event) => onPasswordChange(event.target.value)} autoComplete="current-password" required /></label>
-          {errorMessage && <p className="error-message" role="alert">{errorMessage}</p>}
-          <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
-export default function App() {
+export default function App({client = api} = {}) {
   const [mode, setMode] = useState('exact');
   const [status, setStatus] = useState('idle');
   const [refreshKey, setRefreshKey] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
   const [unsavedText, setUnsavedText] = useState('');
-  const [signedIn, setSignedIn] = useState(false);
+  const [user,setUser]=useState(null);
+  const signedIn=Boolean(user);
+  const [loading,setLoading]=useState(true);
   const [signInBusy, setSignInBusy] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+
   const voiceTyping = typeof window !== 'undefined' ? window.voiceTyping : undefined;
   const isElectron = Boolean(voiceTyping);
 
   useEffect(() => {
     if (!signedIn || typeof voiceTyping?.onStatus !== 'function') return undefined;
-    voiceTyping.onStatus((event) => {
+    const unsubscribe=voiceTyping.onStatus((event) => {
       const next = statusForEvent[event?.type] || 'idle';
       setStatus(next);
       if (event?.type === 'recording-started') {
@@ -71,15 +54,15 @@ export default function App() {
         if (event?.type === 'save-warning' && typeof event.text === 'string') setUnsavedText(event.text);
       }
     });
-    return undefined;
+    return unsubscribe;
   }, [signedIn, voiceTyping]);
 
   useEffect(() => {
     if (!signedIn || typeof voiceTyping?.onResult !== 'function') return undefined;
-    voiceTyping.onResult((result) => {
+    const unsubscribe=voiceTyping.onResult((result) => {
       if (typeof result?.text === 'string') setUnsavedText(result.text);
     });
-    return undefined;
+    return unsubscribe;
   }, [signedIn, voiceTyping]);
 
   useEffect(() => {
@@ -97,33 +80,27 @@ export default function App() {
     if (signedIn) voiceTyping?.setMode?.(mode);
   }, [mode, signedIn, voiceTyping]);
 
-  async function signIn(event) {
-    event.preventDefault();
-    setSignInBusy(true);
-    setErrorMessage('');
-    try {
-      api.setCredentials(username, password);
-      await api.getStats();
-      await voiceTyping?.setCredentials?.(username, password);
-      setSignedIn(true);
-    } catch (error) {
-      api.clearCredentials();
-      setErrorMessage(messageForError(error, 'Unable to sign in.'));
-    } finally {
-      setSignInBusy(false);
-    }
-  }
+  useEffect(() => {
+    let active=true;
+    if(!isElectron)rememberPairing();
+    setLoading(true);setUser(null);setUnsavedText('');
+    const unsubscribe=client.onAuthFailure(()=>{if(active){setUser(null);setUnsavedText('');setErrorMessage('Your session ended. Sign in again.');}});
+    client.getCurrentUser().then(current=>{if(active)setUser(current.user);}).catch(error=>{if(active && error.status!==401)setErrorMessage(messageForError(error,'Unable to check sign-in.'));}).finally(()=>{if(active)setLoading(false);});
+    return ()=>{active=false;unsubscribe?.();};
+  },[client]);
 
-  function signOut() {
-    api.clearCredentials();
-    // Task 7 adds this bridge method; older desktop builds can still sign out here.
-    voiceTyping?.setCredentials?.('', '');
-    setSignedIn(false);
-    setUsername('');
-    setPassword('');
-    setStatus('idle');
-    setErrorMessage('');
-    setUnsavedText('');
+  async function signIn() {
+    setSignInBusy(true);setErrorMessage('');
+    try {await voiceTyping.signIn();setUser((await client.getCurrentUser()).user);}
+    catch(error){setErrorMessage(messageForError(error,'Unable to sign in.'));}
+    finally{setSignInBusy(false);}
+  }
+  async function signOut() {
+    try {
+      await client.logout();
+      await voiceTyping?.logout?.();
+      setUser(null);setStatus('idle');setErrorMessage('');setUnsavedText('');
+    }catch(error){setErrorMessage(messageForError(error,'Unable to sign out.'));}
   }
 
   function toggleRecording(nextMode = mode) {
@@ -143,14 +120,18 @@ export default function App() {
     });
   }
 
-  if (!signedIn) return <SignIn username={username} password={password} onUsernameChange={setUsername} onPasswordChange={setPassword} onSubmit={signIn} busy={signInBusy} errorMessage={errorMessage} />;
+  if(loading) return <main className="shell"><p role="status">Checking sign-in…</p></main>;
+  if (!signedIn) return <SignIn isElectron={isElectron} onSignIn={signIn} busy={signInBusy} errorMessage={errorMessage || (typeof window!=='undefined' && new URLSearchParams(window.location.search).has('authError')?'Google sign-in could not be completed. Please try again.':'')} />;
 
   return (
-    <main className="shell">
+    <main className="shell" key={user.id}>
       <header className="dashboard-header">
         <div><p className="eyebrow">WHISPR</p><h1>Voice typing, made simple.</h1></div>
         <button className="secondary sign-out" type="button" onClick={signOut}>Sign out</button>
       </header>
+      <p className="muted">{user.email}</p>
+      {!isElectron && <PairingApproval client={client} />}
+      {user.role==='owner' && <UserManagement client={client} />}
       <p className="intro">Press the desktop shortcut or use the control below to turn speech into text.</p>
       <section className="card setup-help" aria-labelledby="setup-title">
         <h2 id="setup-title">{isElectron ? 'One-time setup and quick help' : 'Browser recording help'}</h2>
@@ -161,8 +142,8 @@ export default function App() {
       {isElectron
         ? <StatusCard status={status} mode={mode} isElectron onModeChange={setMode} onToggle={() => toggleRecording()} />
         : <BrowserRecorder mode={mode} onModeChange={setMode} onStatus={setStatus} onSaved={() => setRefreshKey((key) => key + 1)} onError={setErrorMessage} />}
-      <TranscriptEditor refreshKey={refreshKey} onChanged={() => { setErrorMessage(''); setRefreshKey((key) => key + 1); }} onError={setErrorMessage} />
-      <StatsPanel refreshKey={refreshKey} onError={setErrorMessage} />
+      <TranscriptEditor client={client} key={`transcript-${user.id}`} refreshKey={refreshKey} onChanged={() => { setErrorMessage(''); setRefreshKey((key) => key + 1); }} onError={setErrorMessage} />
+      <StatsPanel client={client} key={`stats-${user.id}`} refreshKey={refreshKey} onError={setErrorMessage} />
     </main>
   );
 }

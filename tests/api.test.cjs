@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const { createApp } = require('../server/app.cjs');
 
-const authorization = `Basic ${Buffer.from('student:password').toString('base64')}`;
+const {authorization,authOptions,userId}=require('./helpers/auth-fixture.cjs');
 const timestamp = '2026-10-08T00:00:00.000Z';
 
 function createFakeRepository({ transcript = null, stats = { totalWords: 0, totalDurationSeconds: 0, sessionCount: 0, successRate: 0 } } = {}) {
@@ -20,7 +20,7 @@ function createFakeRepository({ transcript = null, stats = { totalWords: 0, tota
       calls.push({ method: 'getLatestTranscript' });
       return latest;
     },
-    async updateTranscript(id, text, updatedAt) {
+    async updateTranscript(userId, id, text, updatedAt) {
       calls.push({ method: 'updateTranscript', input: { id, text, updatedAt } });
       latest = { ...latest, id, text: text.trim(), wordCount: text.trim().split(/\s+/).length, updatedAt };
       return latest;
@@ -43,7 +43,7 @@ function createFakeRepository({ transcript = null, stats = { totalWords: 0, tota
 }
 
 async function withApp(repository, run) {
-  const app = createApp({ repository, username: 'student', password: 'password', commit: 'abc123', clock: () => new Date(timestamp) });
+  const app = createApp({ repository, ...authOptions, commit: 'abc123', clock: () => new Date(timestamp) });
   const server = app.listen(0);
   await new Promise(resolve => server.once('listening', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -74,7 +74,7 @@ test('exposes the deployment version without credentials and protects data route
 
     const protectedResponse = await request('/api/transcript');
     assert.equal(protectedResponse.status, 401);
-    assert.equal(protectedResponse.headers.get('www-authenticate'), 'Basic realm="Whispr"');
+    assert.equal(protectedResponse.headers.get('www-authenticate'), null);
   });
 });
 
@@ -84,7 +84,7 @@ test('saves and reads a dictation through the authenticated repository contract'
     const saved = await request('/api/dictations', jsonOptions('POST', { text: ' one two ', mode: 'exact', duration: 2 }));
     assert.equal(saved.status, 201);
     assert.equal(repository.calls[0].method, 'saveDictation');
-    assert.deepEqual(repository.calls[0].input, { text: 'one two', mode: 'exact', duration: 2, timestamp });
+    assert.deepEqual(repository.calls[0].input, { userId, text: 'one two', mode: 'exact', duration: 2, timestamp });
     assert.equal((await (await request('/api/transcript', { headers: { authorization } })).json()).text, 'one two');
   });
 });
@@ -108,7 +108,7 @@ test('returns stats and records only failed sessions', async () => {
     assert.deepEqual(await stats.json(), { totalWords: 2, totalDurationSeconds: 3, sessionCount: 1, successRate: 100 });
     const failed = await request('/api/sessions', jsonOptions('POST', { status: 'error', duration: 2, errorMessage: 'No microphone' }));
     assert.equal(failed.status, 201);
-    assert.deepEqual(repository.calls.find(call => call.method === 'saveFailedSession').input, { duration: 2, errorMessage: 'No microphone', timestamp });
+    assert.deepEqual(repository.calls.find(call => call.method === 'saveFailedSession').input, { userId, duration: 2, errorMessage: 'No microphone', timestamp });
     assert.equal((await request('/api/sessions', jsonOptions('POST', { status: 'success', duration: 2 }))).status, 400);
   });
 });
@@ -125,7 +125,6 @@ test('rejects invalid fields and hides repository failures', async () => {
   });
 });
 
-test('requires credentials when constructing the app', () => {
-  assert.throws(() => createApp({ repository: createFakeRepository(), username: '', password: 'password', commit: 'abc123' }), /Basic auth credentials are required/);
-  assert.throws(() => createApp({ repository: createFakeRepository(), username: 'student', password: '', commit: 'abc123' }), /Basic auth credentials are required/);
+test('requires authentication services when constructing the app', () => {
+  assert.throws(() => createApp({repository:createFakeRepository()}), /Authentication configuration is required/);
 });

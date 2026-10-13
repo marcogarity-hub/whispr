@@ -264,24 +264,15 @@ test('capture transcription failures report error status without pasting', async
   assert.equal(controller.pasteText.mockCalled, undefined);
 });
 
-test('credentials bridge accepts only the trusted dashboard and clears on sign-out', async () => {
-  const handlers = new Map();
-  const trustedContents = {};
-  const dashboard = { webContents: trustedContents };
-  const runtime = createRecordingRuntime({
-    dashboardWindow: dashboard,
-    getDashboardWindow: () => dashboard,
-    ipcMain: { handle(channel, callback) { handlers.set(channel, callback); }, on() {} },
-    localProvider: { transcribe: async () => ({ text: 'Hello' }) },
-    sync: { saveDictation: async () => ({}) },
-    controller: { pasteText: async () => ({ ok: true }), showNotification() {} }
-  });
-  runtime.registerIpc();
-
-  const setCredentials = handlers.get('auth:set-credentials');
-  assert.deepEqual(await setCredentials({ sender: trustedContents }, { username: 'student', password: 'password' }), { ok: true });
-  assert.throws(() => setCredentials({ sender: {} }, { username: 'attacker', password: 'password' }), /Untrusted window/);
-  assert.deepEqual(await setCredentials({ sender: trustedContents }, { username: '', password: '' }), { ok: true });
+test('desktop authentication IPC accepts only the trusted dashboard and never returns bearer credentials', async () => {
+ const handlers=new Map(),trustedContents={};const dashboard={webContents:trustedContents};
+ const desktopAuth={signIn:async()=>({user:{id:'bob'}}),getStatus:async()=>({user:{id:'bob'}}),logout:async()=>({ok:true}),requestApi:async()=>({ok:true,status:200,payload:{}}),getAuthorization:()=> 'Bearer secret'};
+ const runtime=createRecordingRuntime({dashboardWindow:dashboard,getDashboardWindow:()=>dashboard,desktopAuth,ipcMain:{handle:(channel,handler)=>handlers.set(channel,handler),on(){}},sync:{},controller:{showNotification(){}}});
+ runtime.registerIpc();
+ await assert.rejects(handlers.get('auth:sign-in')({sender:{}}),/Untrusted window/);
+ const result=await handlers.get('auth:sign-in')({sender:trustedContents});
+ assert.deepEqual(result,{user:{id:'bob'}});assert.equal(JSON.stringify(result).includes('secret'),false);
+ assert.deepEqual(await handlers.get('auth:logout')({sender:trustedContents}),{ok:true});
 });
 
 test('dashboard navigation guards block cross-origin redirects', () => {
@@ -332,7 +323,7 @@ test('local transcription failure records one failed session when sync is reacha
   assert.deepEqual(sent.at(-1), { type: 'transcription-error', message: 'whisper unavailable' });
 });
 
-test('trusted credentials are used for the Electron text sync Basic header', async () => {
+test('main-process desktop session is used for text sync bearer header', async () => {
   const trustedContents = { send() {} };
   const requests = [];
   const dashboard = { webContents: trustedContents };
@@ -346,12 +337,13 @@ test('trusted credentials are used for the Electron text sync Basic header', asy
       return new Response(JSON.stringify({ transcript: { text: 'Hello' }, session: { status: 'success' } }), { status: 201 });
     },
     controller: { pasteText: async () => ({ ok: true }), showNotification() {} },
-    apiUrl: 'https://whispr.example'
+    apiUrl: 'https://whispr.example',
+    desktopAuth:{getAuthorization:()=> 'Bearer desktop-session',getStatus:async()=>({user:{id:'bob'}})}
   });
   authenticatedRuntime.registerIpc();
-  await handlers.get('auth:set-credentials')({ sender: trustedContents }, { username: 'student', password: 'password' });
+  await handlers.get('auth:get-status')({sender:trustedContents});
   await authenticatedRuntime.handleCaptureEvent({ type: 'recording-stopped', audioBase64: 'SGk=', mimeType: 'audio/webm', durationSeconds: 1 });
 
   assert.equal(requests.at(-1).url, 'https://whispr.example/api/dictations');
-  assert.equal(requests.at(-1).options.headers.authorization, 'Basic c3R1ZGVudDpwYXNzd29yZA==');
+  assert.equal(requests.at(-1).options.headers.authorization, 'Bearer desktop-session');
 });
