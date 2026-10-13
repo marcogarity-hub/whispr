@@ -59,10 +59,7 @@ Verified on October 12, 2026:
 - An unauthenticated `/api/transcript` request returned HTTP 401.
 - Supabase contains `transcripts` and `sessions`, both with row-level security enabled.
 
-Still to verify: authenticated saving and reading through the live app, persistence
-across a subsequent deployment, a visible change deploying automatically from `main`,
-and request logs for a live app action. Part B and the class showcase pull request
-remain separate work.
+Part B live verification on October 13: owner and ordinary-user Google login succeeded, direct ordinary-user owner actions returned 403, anonymous transcript access returned 401, both accounts saved isolated verification transcripts, and Vercel request logs showed POST /api/dictations 201 and GET /api/transcript 200. The following release changes the signed-out text visibly to verify main auto-deployment and persistence.
 
 ## Part B — deployed October 13, 2026
 
@@ -82,3 +79,5 @@ See [the release runbook](docs/GOOGLE-AUTH-RELEASE.md) before any production mig
 ## Remaining submission and manual checks
 
 The class showcase pull request and Canvas submission remain outstanding. Full Electron recording/shortcut/paste acceptance and a classmate repeating the ordinary-user 403 check are still manual checks.
+
+Commit attribution: Vercel initially blocked automatic deployment because the course-configured email was not associated with GitHub. Release commits now use the authenticated account’s GitHub noreply address. Old BASIC_AUTH settings were removed after successful OAuth acceptance.
