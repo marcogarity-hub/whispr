@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+.env
+.local/whisper/
+# Public deployment secrets and runtime state
+.env*
+!.env.example
+.vercel/
+.supabase/
+*.sqlite-wal
+*.sqlite-shm
